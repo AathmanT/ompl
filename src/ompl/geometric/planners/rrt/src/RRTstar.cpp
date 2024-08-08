@@ -49,6 +49,186 @@
 #include "ompl/tools/config/SelfConfig.h"
 #include "ompl/util/GeometricEquations.h"
 
+#include <ompl/base/spaces/RealVectorStateSpace.h>
+namespace ob = ompl::base;
+namespace og = ompl::geometric;
+
+
+static constexpr double ROBOT_RADIUS = 0.5; // Robot radius
+static constexpr double OBSTACLE_RADIUS = 0.5; // Obstacle radius
+
+
+bool test_circle_circle(const std::pair<double, double> &a_position, double a_radius,
+                        const std::vector<std::pair<double, double> > &b_positions, double b_radius) {
+    // Check for collision with each circle in b_positions
+    for (const auto &b_position: b_positions) {
+        // Calculate the squared distance between the centers of the circles
+        double difference_v_x = b_position.first - a_position.first;
+        double difference_v_y = b_position.second - a_position.second;
+        double distance_sq = std::pow(difference_v_x, 2) + std::pow(difference_v_y, 2);
+
+        // Calculate the squared sum of the radii of the circles
+        double total_radius_sq = std::pow(a_radius + b_radius, 2);
+
+        // Check if the distance is less than or equal to the total radius
+        if (distance_sq <= total_radius_sq)
+            return true; // Collision
+    }
+
+    // No collision with any circle in b_positions
+    return false; // No collision
+}
+
+bool check_collision(const std::pair<double, double> &conf, double robot_radius,
+                     const std::vector<std::pair<double, double> > &obstacle_positions, double obstacle_radius) {
+    // Convert the robot's position and radius to a pair and a double
+    auto robot_position = conf;
+
+    // Check for collision with each obstacle
+    if (test_circle_circle(robot_position, robot_radius, obstacle_positions, obstacle_radius))
+        return true; // Collision
+
+    // No collision with any obstacle
+    return false; // No collision
+}
+
+std::pair<double, double> get_vector(const std::pair<double, double> &p1, const std::pair<double, double> &p2) {
+    return {p2.first - p1.first, p2.second - p1.second};
+}
+
+std::vector<std::pair<double, double> > get_points_along_vector(const std::pair<double, double> &start,
+                                                                const std::pair<double, double> &vector,
+                                                                double step_size) {
+    double norm = std::sqrt(std::pow(vector.first, 2) + std::pow(vector.second, 2));
+    if (norm == 0)
+        return {start};
+    std::pair<double, double> unit_vector = {vector.first / norm, vector.second / norm};
+    int num_steps = static_cast<int>(norm / step_size);
+    std::vector<std::pair<double, double> > points;
+    for (int i = 0; i <= num_steps; ++i)
+        points.push_back({
+            start.first + step_size * unit_vector.first * i, start.second + step_size * unit_vector.second * i
+        });
+    return points;
+}
+
+std::vector<std::pair<double, double> > process_path(const std::vector<std::pair<double, double> > &path,
+                                                     double step_size) {
+    std::vector<std::pair<double, double> > new_path;
+    for (size_t i = 0; i < path.size() - 1; ++i) {
+        auto p1 = path[i];
+        auto p2 = path[i + 1];
+        auto vector = get_vector(p1, p2);
+        auto points = get_points_along_vector(p1, vector, step_size);
+        new_path.insert(new_path.end(), points.begin(), points.end());
+    }
+    if (!path.empty())
+        new_path.push_back(path.back()); // Add the last point
+    return new_path;
+}
+
+class MyMotionValidator : public ompl::base::MotionValidator {
+public:
+    MyMotionValidator(const ompl::base::SpaceInformationPtr &si)
+        : ompl::base::MotionValidator(si) {
+    }
+
+    virtual std::tuple<bool, int> checkMotionNew(const ompl::base::State *s1, const ompl::base::State *s2,
+                                                 const int parent_timestamp,
+                                                 const std::vector<std::vector<std::pair<double, double> > > &
+                                                 other_robot_traj) const {
+        std::cerr << "Calling checkmotion new motionvalidator." << std::endl;
+
+        // // Your implementation here
+        // bool result = false; // replace with your actual logic
+        // int timestamp = 0; // replace with your actual logic
+        // return std::make_tuple(result, timestamp);
+
+        std::vector<std::pair<double, double> > new_conf_list;
+        double step_size = 0.01; // TODO: Change this to 0.001 after testing
+        auto rand_node = s2->as<ompl::base::RealVectorStateSpace::StateType>()->values;
+        auto nearest_node = s1->as<ompl::base::RealVectorStateSpace::StateType>()->values;
+        int num_steps = static_cast<int>(std::sqrt(
+                                             std::pow(rand_node[0] - nearest_node[0], 2) + std::pow(
+                                                 rand_node[1] - nearest_node[1], 2)) / step_size);
+        if (num_steps == 0)
+            return std::make_tuple(false, 0);
+
+        for (int i = 0; i <= num_steps; ++i) {
+            double t = static_cast<double>(i) / num_steps;
+            std::pair<double, double> new_conf = {
+                nearest_node[0] + t * (rand_node[0] - nearest_node[0]),
+                nearest_node[1] + t * (rand_node[1] - nearest_node[1])
+            };
+            new_conf_list.push_back(new_conf);
+        }
+
+        if (other_robot_traj.empty()) {
+            for (const auto &other_robot_path : other_robot_traj) {
+    auto processed_path = process_path(other_robot_path, step_size);
+    for (size_t i = 0; i < new_conf_list.size(); ++i) {
+        int timestamp = parent_timestamp + i;
+        if (timestamp < processed_path.size()) {
+            // Get the other robot's position at the corresponding timestamp
+            auto other_robot_position = processed_path[timestamp];
+            // Check collision at the corresponding timestamp
+            if (check_collision(new_conf_list[i], ROBOT_RADIUS, {other_robot_position}, OBSTACLE_RADIUS))
+                return std::make_tuple(false, 0);
+        }
+    }
+}
+
+        }
+        return std::make_tuple(true, new_conf_list.size());
+    }
+
+    virtual bool checkMotion(const ompl::base::State *s1, const ompl::base::State *s2) const override {
+        // Dummy implementation
+        return true;
+    }
+
+    virtual bool checkMotion(const ompl::base::State *s1, const ompl::base::State *s2,
+                             std::pair<ompl::base::State *, double> &lastValid) const override {
+        // Dummy implementation
+        return true;
+    }
+};
+
+
+class MySpaceInformation : public ompl::base::SpaceInformation,
+                              public std::enable_shared_from_this<MySpaceInformation> {
+public:
+    MySpaceInformation(const ompl::base::StateSpacePtr &stateSpace,
+                       const std::vector<std::vector<std::pair<double, double> > > &other_robot_traj)
+        : ompl::base::SpaceInformation(stateSpace), other_robot_traj_(other_robot_traj) {
+        // setupMyMotionValidator();
+    }
+
+    virtual std::tuple<bool, int> checkMotionNew(const ompl::base::State *s1, const ompl::base::State *s2,
+                                                 const int parent_timestamp) const {
+        std::cerr << "Calling checkmotion new myspaceinformation." << std::endl;
+
+        return std::static_pointer_cast<MyMotionValidator>(motionValidator_)->checkMotionNew(
+            s1, s2, parent_timestamp, other_robot_traj_);
+    }
+
+    void setupMyMotionValidator() {
+        std::cerr << "Calling checkmotion new initialization" << std::endl;
+
+        // if (!motionValidator_)
+        // {
+        std::cerr << "Calling checkmotion new initialized ===" << std::endl;
+
+        motionValidator_ = std::make_shared<MyMotionValidator>(this->shared_from_this());
+        // }
+    }
+
+public:
+    std::vector<std::vector<std::pair<double, double> > > other_robot_traj_;
+};
+
+
+
 ompl::geometric::RRTstar::RRTstar(const base::SpaceInformationPtr &si)
   : base::Planner(si, "RRTstar")
 {
@@ -291,7 +471,27 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
         }
 
         // Check if the motion between the nearest state and the state to add is valid
-        if (si_->checkMotion(nmotion->state, dstate))
+        // TODO
+        //        if (si_->checkMotion(nmotion->state, dstate))
+        bool steerable;
+        int new_timestamp;
+        auto my_si = std::dynamic_pointer_cast<MySpaceInformation>(si_);
+        if (my_si)
+        {
+            std::cerr << "Calling checkmotion new." << std::endl;
+            std::tie(steerable, new_timestamp) = my_si->checkMotionNew(nmotion->state, dstate, nmotion->timestamp);
+            
+
+        }
+        else
+        {
+            // Handle error: si_ was not pointing to a MySpaceInformation object
+            std::cerr << "Error: SpaceInformationPtr is not pointing to a MySpaceInformation object." << std::endl;
+            // Also throw an exception to halt the program
+            throw std::runtime_error("SpaceInformationPtr is not pointing to a MySpaceInformation object.");
+        }
+
+        if (steerable)
         {
             // create a motion
             auto *motion = new Motion(si_);
@@ -299,6 +499,8 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
             motion->parent = nmotion;
             motion->incCost = opt_->motionCost(nmotion->state, motion->state);
             motion->cost = opt_->combineCosts(nmotion->cost, motion->incCost);
+            motion->timestamp = motion->timestamp + new_timestamp;
+            // TODO
 
             // Find nearby neighbors of the new motion
             getNeighbors(motion, nbh);
@@ -354,13 +556,29 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
                 for (std::vector<std::size_t>::const_iterator i = sortedCostIndices.begin();
                      i != sortedCostIndices.begin() + nbh.size(); ++i)
                 {
+                    std::tie(steerable, new_timestamp) = my_si->checkMotionNew(nmotion->state, dstate, nmotion->timestamp);
+
                     if (nbh[*i] == nmotion ||
                         ((!useKNearest_ || si_->distance(nbh[*i]->state, motion->state) < maxDistance_) &&
                          si_->checkMotion(nbh[*i]->state, motion->state)))
                     {
+                        // TODO do the timestamp update
+                        // auto my_si = std::dynamic_pointer_cast<MySpaceInformation>(si_);
+                        //        if (my_si)
+                        //        {
+                        //            std::tie(steerable, new_timestamp) = my_si->checkMotionNew(nmotion->state, dstate, nmotion->timestamp);
+                        //        }
+                        //        else
+                        //        {
+                        //            // Handle error: si_ was not pointing to a MySpaceInformation object
+                        //            std::cerr << "Error: SpaceInformationPtr is not pointing to a MySpaceInformation object." << std::endl;
+                        //            // Also throw an exception to halt the program
+                        //            throw std::runtime_error("SpaceInformationPtr is not pointing to a MySpaceInformation object.");
+                        //        }
                         motion->incCost = incCosts[*i];
                         motion->cost = costs[*i];
                         motion->parent = nbh[*i];
+                        // TODO motion->timestamp = motion->parent->timestamp + new_timestamp
                         valid[*i] = 1;
                         break;
                     }
@@ -458,6 +676,7 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
                             nbh[i]->incCost = nbhIncCost;
                             nbh[i]->cost = nbhNewCost;
                             nbh[i]->parent->children.push_back(nbh[i]);
+                            // TODO nbh[i]->timestamp = motion->timestamp +
 
                             // Update the costs of the node's children
                             updateChildCosts(nbh[i]);

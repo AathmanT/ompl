@@ -328,7 +328,7 @@ namespace ompl
                 return bestCost_;
             }
 
-        protected:
+        public:
             /** \brief Representation of a motion */
             class Motion
             {
@@ -356,6 +356,8 @@ namespace ompl
                 /** \brief The incremental cost of this motion's parent to this motion (this is stored to save distance
                  * computations in the updateChildCosts() method) */
                 base::Cost incCost;
+
+                int timestamp;
 
                 /** \brief The set of motions descending from the current motion */
                 std::vector<Motion *> children;
