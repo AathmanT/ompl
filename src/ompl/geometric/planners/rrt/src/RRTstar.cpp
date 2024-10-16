@@ -54,8 +54,8 @@ namespace ob = ompl::base;
 namespace og = ompl::geometric;
 
 
-static constexpr double ROBOT_RADIUS = 0.5; // Robot radius
-static constexpr double OBSTACLE_RADIUS = 0.5; // Obstacle radius
+static constexpr double ROBOT_RADIUS = 1.0; // Robot radius
+static constexpr double OBSTACLE_RADIUS = 1.0; // Obstacle radius
 
 
 bool test_circle_circle(const std::pair<double, double> &a_position, double a_radius,
@@ -137,7 +137,7 @@ public:
                                                  const int parent_timestamp,
                                                  const std::vector<std::vector<std::pair<double, double> > > &
                                                  other_robot_traj) const {
-        std::cerr << "Calling checkmotion new motionvalidator." << std::endl;
+        // std::cerr << "Calling checkmotion new motionvalidator." << std::endl;
 
         // // Your implementation here
         // bool result = false; // replace with your actual logic
@@ -206,7 +206,7 @@ public:
 
     virtual std::tuple<bool, int> checkMotionNew(const ompl::base::State *s1, const ompl::base::State *s2,
                                                  const int parent_timestamp) const {
-        std::cerr << "Calling checkmotion new myspaceinformation." << std::endl;
+        // std::cerr << "Calling checkmotion new myspaceinformation." << std::endl;
 
         return std::static_pointer_cast<MyMotionValidator>(motionValidator_)->checkMotionNew(
             s1, s2, parent_timestamp, other_robot_traj_);
@@ -478,7 +478,7 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
         auto my_si = std::dynamic_pointer_cast<MySpaceInformation>(si_);
         if (my_si)
         {
-            std::cerr << "Calling checkmotion new." << std::endl;
+            // std::cerr << "Calling checkmotion new." << std::endl;
             std::tie(steerable, new_timestamp) = my_si->checkMotionNew(nmotion->state, dstate, nmotion->timestamp);
             
 
@@ -556,11 +556,13 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
                 for (std::vector<std::size_t>::const_iterator i = sortedCostIndices.begin();
                      i != sortedCostIndices.begin() + nbh.size(); ++i)
                 {
-                    std::tie(steerable, new_timestamp) = my_si->checkMotionNew(nmotion->state, dstate, nmotion->timestamp);
+                    bool steerable2;
+                    int new_timestamp2;
+                    std::tie(steerable2, new_timestamp2) = my_si->checkMotionNew(nbh[*i]->state, motion->state, nbh[*i]->timestamp);
 
                     if (nbh[*i] == nmotion ||
                         ((!useKNearest_ || si_->distance(nbh[*i]->state, motion->state) < maxDistance_) &&
-                         si_->checkMotion(nbh[*i]->state, motion->state)))
+                         steerable2))
                     {
                         // TODO do the timestamp update
                         // auto my_si = std::dynamic_pointer_cast<MySpaceInformation>(si_);
@@ -578,7 +580,7 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
                         motion->incCost = incCosts[*i];
                         motion->cost = costs[*i];
                         motion->parent = nbh[*i];
-                        // TODO motion->timestamp = motion->parent->timestamp + new_timestamp
+                        motion->timestamp = motion->parent->timestamp + new_timestamp;
                         valid[*i] = 1;
                         break;
                     }
@@ -599,12 +601,17 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
                         costs[i] = opt_->combineCosts(nbh[i]->cost, incCosts[i]);
                         if (opt_->isCostBetterThan(costs[i], motion->cost))
                         {
+                            bool steerable3;
+                            int new_timestamp3;
+                            std::tie(steerable3, new_timestamp3) = my_si->checkMotionNew(nbh[i]->state, motion->state, nbh[i]->timestamp);
+
                             if ((!useKNearest_ || si_->distance(nbh[i]->state, motion->state) < maxDistance_) &&
-                                si_->checkMotion(nbh[i]->state, motion->state))
+                                steerable3)
                             {
                                 motion->incCost = incCosts[i];
                                 motion->cost = costs[i];
                                 motion->parent = nbh[i];
+                                motion->timestamp = motion->parent->timestamp + new_timestamp3;
                                 valid[i] = 1;
                             }
                             else
@@ -655,11 +662,15 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
                     if (opt_->isCostBetterThan(nbhNewCost, nbh[i]->cost))
                     {
                         bool motionValid;
+                        bool steerable4;
+                        int new_timestamp4;
                         if (valid[i] == 0)
                         {
+                            std::tie(steerable4, new_timestamp4) = my_si->checkMotionNew(motion->state, nbh[i]->state, motion->timestamp);
+
                             motionValid =
                                 (!useKNearest_ || si_->distance(nbh[i]->state, motion->state) < maxDistance_) &&
-                                si_->checkMotion(motion->state, nbh[i]->state);
+                                steerable4;
                         }
                         else
                         {
@@ -676,7 +687,7 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
                             nbh[i]->incCost = nbhIncCost;
                             nbh[i]->cost = nbhNewCost;
                             nbh[i]->parent->children.push_back(nbh[i]);
-                            // TODO nbh[i]->timestamp = motion->timestamp +
+                            nbh[i]->timestamp = nbh[i]->parent->timestamp + new_timestamp4;
 
                             // Update the costs of the node's children
                             updateChildCosts(nbh[i]);
